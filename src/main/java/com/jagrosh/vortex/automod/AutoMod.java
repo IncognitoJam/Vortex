@@ -137,7 +137,7 @@ public class AutoMod
         boolean inRaidMode = vortex.getDatabase().settings.getSettings(event.getGuild()).isInRaidMode();
         AutomodSettings ams = vortex.getDatabase().automod.getSettings(event.getGuild());
         OffsetDateTime now = OffsetDateTime.now();
-        boolean kicking = false;
+        List<Member> kicking = null;
         
         // if we're in raid mode...
         if(inRaidMode)
@@ -153,33 +153,32 @@ public class AutoMod
             // otherwise, boot 'em
             else if(event.getGuild().getSelfMember().hasPermission(Permission.KICK_MEMBERS))
             {
-                kicking = true;
+                // add them to the list of people to kick
+                kicking = Collections.singletonList(event.getMember());
             }
         }
         
         // now, if we're not in raid mode, and auto mode is enabled
         else if(ams.useAutoRaidMode())
         {
-            // find the time that we should be looking after, and count the number of people that joined after that
+            // find the time that we should be looking after, and all of the people that joined after that
             OffsetDateTime min = event.getMember().getJoinDate().minusSeconds(ams.raidmodeTime);
-            long recent = event.getGuild().getMemberCache().stream().filter(m -> !m.getUser().isBot() && m.getJoinDate().isAfter(min)).count();
-            if(recent>=ams.raidmodeNumber)
+            List<Member> recent = event.getGuild().getMemberCache().stream().filter(m -> !m.getUser().isBot() && m.getJoinDate().isAfter(min)).collect(Collectors.toList());
+
+            // count the number
+            if(recent.size()>=ams.raidmodeNumber)
             {
                 enableRaidMode(event.getGuild(), event.getGuild().getSelfMember(), now, "Maximum join rate exceeded ("+ams.raidmodeNumber+"/"+ams.raidmodeTime+"s)");
-                kicking = true;
+
+                // add all of them to the list of people to kick
+                kicking = recent;
             }
         }
         
-        if(kicking)
+        if(kicking != null)
         {
-            OtherUtil.safeDM(event.getUser(), "Sorry, **"+event.getGuild().getName()+"** is currently under lockdown. "
-                    + "Please try joining again later. Sorry for the inconvenience.", true, () -> 
-                    {
-                        try
-                        {
-                            event.getGuild().getController().kick(event.getMember(), "Anti-Raid Mode").queue();
-                        }catch(Exception ignore){}
-                    });
+            // kick each member in the list
+            kicking.forEach(this::kickMember);
         }
         else
         {
@@ -198,6 +197,17 @@ public class AutoMod
         latestGuildJoin.put(event.getGuild().getIdLong(), now);
     }
     
+    private void kickMember(Member member)
+    {
+        OtherUtil.safeDM(member.getUser(), "Sorry, **"+member.getGuild().getName()+"** is currently under lockdown. "
+                + "Please try joining again later. Sorry for the inconvenience.", true, () ->
+                {
+                    try
+                    {
+                        member.getGuild().getController().kick(member, "Anti-Raid Mode").queue();
+                    }catch(Exception ignore){}
+                });
+    }
     
     private boolean shouldPerformAutomod(Member member, TextChannel channel)
     {
